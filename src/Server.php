@@ -42,8 +42,9 @@ class Server extends WS\Handler {
         $conn->attr->dev = (object)[];
         $dev = $conn->attr->dev;
 
-        $dev->emitter = null;
+        $dev->known = false;
         $dev->device = new Device();
+        $dev->emitter = null;
         $dev->device->emitter($dev->emitter);
       }
 
@@ -63,12 +64,10 @@ class Server extends WS\Handler {
       return;
     }
 
-    $emitter = $dev->emitter;
     $conn->attr->dev = null;
+    ($dev->emitter)('close');
 
-    $emitter('close');
-
-    if(!is_subclass_of($dev->device, Device::class)) {
+    if(!$dev->known) {
       $dev->device->removeAllListeners();
     }
   }
@@ -80,6 +79,7 @@ class Server extends WS\Handler {
 
     $class = $class ?: Device::class;
     $dev = $this->_devices[$key] = (object)[];
+    $dev->known = true;
     $dev->device = new $class(...$args);
     $dev->emitter = null;
     $dev->device->emitter($dev->emitter);
