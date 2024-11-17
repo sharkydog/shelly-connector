@@ -1,0 +1,27 @@
+{
+  "name": "sharkydog/shelly-connector",
+  "description": "Websocket client and server for Shelly Gen2+ devices in PHP",
+  "keywords": ["Shelly", "IoT"],
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "Aleksandar Dimitrov",
+      "email": "admin@sharkydog.info"
+    }
+  ],
+  "require": {
+    "php": ">=7.4",
+    "sharkydog/private-emitter": "^1.0",
+    "sharkydog/http": "^1.2",
+    "react/promise": "^3.2",
+    "react/event-loop": "^1.5"
+  },
+  "suggest": {
+    "sharkydog/mdns": "Use mDNS to resolve .local hostnames"
+  },
+  "autoload": {
+    "psr-4": {
+      "SharkyDog\\Shelly\\": "src/"
+    }
+  }
+}
