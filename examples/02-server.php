@@ -81,8 +81,6 @@ $shellyServer->on('device', function(Shelly\Device $shelly, bool $registered) {
 // register a known device by id
 // the returned SharkyDog\Shelly\Device object
 // is the same instance that will be emitted above when the shelly connects
-// only child classes of SharkyDog\Shelly\Device can be registered
-// SharkyDog\Shelly\Device itself can not
 $shelly = $shellyServer->registerDeviceByID(CONFIG_SHELLY_ID);
 // or register by ip address
 //$shelly = $shellyServer->registerDeviceByIP(CONFIG_ADDR);

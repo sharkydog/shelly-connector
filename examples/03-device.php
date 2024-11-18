@@ -116,6 +116,9 @@ $client->connect();
 // set the custom device class
 // all parameters after the class will be passed to the constructor
 // only one in this case - uptime report interval
+
+// only child classes of SharkyDog\Shelly\Device can be set
+// SharkyDog\Shelly\Device itself can not
 $client->setDeviceClass(ShellyCustomDevice::class, 10);
 
 $shelly = $client->getDevice();
@@ -177,6 +180,9 @@ $httpd->route('/ws/shelly', $shellyServer);
 // all parameters after the class will be passed to the constructor
 // only one in this case - uptime report interval
 // registerDeviceByIP() can be used the same way
+//
+// only child classes of SharkyDog\Shelly\Device can be registered
+// SharkyDog\Shelly\Device itself can not be set as custom class
 $shelly = $shellyServer->registerDeviceByID(CONFIG_SHELLY_ID, ShellyCustomDevice::class, 10);
 
 $shelly->on('open', function($shelly) {
