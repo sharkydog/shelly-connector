@@ -220,7 +220,7 @@ class Device {
     $this->_emit('notify-event', [$event, $comp, $data, $time]);
   }
 
-  public function setPassword($password) {
+  public function setPassword(string $password) {
     $this->_authPasswd = $password;
 
     if($password) {
