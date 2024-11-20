@@ -49,6 +49,15 @@ class Client extends WsClientDecorator {
   public function send() {
   }
 
+  public function on($event, callable $listener) {
+    if($event == 'open' && $this->ws->connected()) $listener($this->_device);
+    parent::on($event, $listener);
+  }
+  public function once($event, callable $listener) {
+    if($event == 'open' && $this->ws->connected()) $listener($this->_device);
+    else parent::once($event, $listener);
+  }
+
   public function setDeviceClass(string $class, ...$args) {
     if($this->_device) {
       return;

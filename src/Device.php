@@ -5,7 +5,10 @@ use SharkyDog\HTTP\Log;
 use React\Promise;
 
 class Device {
-  use PrivateEmitterTrait;
+  use PrivateEmitterTrait {
+    PrivateEmitterTrait::on as private _PrivateEmitter_on;
+    PrivateEmitterTrait::once as private _PrivateEmitter_once;
+  }
 
   private $_bound = false;
   private $_sender;
@@ -218,6 +221,19 @@ class Device {
 
   protected function _on_notify_event(string $event, string $comp, array $data, float $time) {
     $this->_emit('notify-event', [$event, $comp, $data, $time]);
+  }
+
+  public function on($event, callable $listener) {
+    if($event == 'open' && $this->connected()) $listener($this);
+    $this->_PrivateEmitter_on($event, $listener);
+  }
+  public function once($event, callable $listener) {
+    if($event == 'open' && $this->connected()) $listener($this);
+    else $this->_PrivateEmitter_once($event, $listener);
+  }
+
+  public function connected(): bool {
+    return !!$this->_sender;
   }
 
   public function setPassword(string $password) {
