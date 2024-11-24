@@ -14,6 +14,8 @@ class Device {
   private $_sender;
   private $_authPasswd;
   private $_auth = [];
+  private $_silenceAll = false;
+  private $_silenceNext;
   private $_cmdSent = [];
   private $_cmdId = 0;
 
@@ -25,6 +27,20 @@ class Device {
     if($this->_bound) return;
     $emitter = $this->_emitter();
     $this->_bound = true;
+  }
+
+  private function _nextSilent() {
+    if($this->_silenceNext !== null) {
+      $silent = $this->_silenceNext;
+      $this->_silenceNext = null;
+      return $silent;
+    } else {
+      return $this->_silenceAll;
+    }
+  }
+
+  private function _silencedPromise($promise, $silent) {
+    return $silent ? $promise->catch(fn()=>null) : $promise;
   }
 
   private function _cmd($method, $params=[], $deferred=null) {
@@ -249,21 +265,36 @@ class Device {
     }
   }
 
+  public function silenceAll(?bool $p=null): bool {
+    if($p !== null) $this->_silenceAll = $p;
+    return $this->_silenceAll;
+  }
+  public function silenceNext(?bool $p=null): ?bool {
+    if($p !== null) $this->_silenceNext = $p;
+    return $this->_silenceNext;
+  }
+  public function isNextSilent(): bool {
+    return $this->silenceNext() ?? $this->silenceAll();
+  }
+
   public function sendCommand(string $method, array $params=[]): Promise\PromiseInterface {
+    $silent = $this->_nextSilent();
+
     if(!$this->_sender) {
-      return Promise\reject(new Exception\ConnNotConnected);
+      return $this->_silencedPromise(Promise\reject(new Exception\ConnNotConnected), $silent);
     }
 
     try {
       $cmdId = $this->_cmd($method, $params);
     } catch(\Exception $e) {
-      return Promise\reject($e);
+      return $this->_silencedPromise(Promise\reject($e), $silent);
     }
 
-    return $this->_cmdSent[$cmdId]['def']->promise();
+    return $this->_silencedPromise($this->_cmdSent[$cmdId]['def']->promise(), $silent);
   }
 
   public function sendCommandSilent(string $method, array $params=[]): Promise\PromiseInterface {
-    return $this->sendCommand($method, $params)->catch(fn()=>null);
+    $this->silenceNext(true);
+    return $this->sendCommand($method, $params);
   }
 }
