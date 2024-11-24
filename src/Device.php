@@ -301,6 +301,9 @@ class Device {
   public function sendCommand(string $method, array $params=[]): Promise\PromiseInterface {
     $silent = $this->_nextSilent();
 
+    if(!$method) {
+      return $this->_silencedPromise(Promise\reject(new Exception\Error('Method is empty', 400)), $silent);
+    }
     if(!$this->_sender) {
       return $this->_silencedPromise(Promise\reject(new Exception\ConnNotConnected), $silent);
     }
@@ -321,6 +324,11 @@ class Device {
 
   public function sendCommandCached(string $method, array $params=[], int $ttl=60): Promise\PromiseInterface {
     $silent = $this->_nextSilent();
+
+    if(!$method) {
+      return $this->_silencedPromise(Promise\reject(new Exception\Error('Method is empty', 400)), $silent);
+    }
+
     $key = $this->_cmdCacheKey($method, $params);
 
     if(isset($this->_cmdCache[$key])) {
