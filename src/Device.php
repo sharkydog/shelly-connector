@@ -3,6 +3,7 @@ namespace SharkyDog\Shelly;
 use SharkyDog\PrivateEmitter\PrivateEmitterTrait;
 use SharkyDog\HTTP\Log;
 use React\Promise;
+use React\EventLoop\Loop;
 
 class Device {
   use PrivateEmitterTrait {
@@ -17,6 +18,7 @@ class Device {
   private $_silenceAll = false;
   private $_silenceNext;
   private $_cmdSent = [];
+  private $_cmdCache = [];
   private $_cmdId = 0;
 
   public function __destruct() {
@@ -72,6 +74,17 @@ class Device {
     ($this->_sender)($cmd);
 
     return $this->_cmdId;
+  }
+
+  private function _cmdCacheKey($method, $params=[]) {
+    if(!empty($params)) {
+      ksort($params);
+      $key = json_encode($params);
+      $key = '.'.(strlen($key)>32 ? md5($key) : $key);
+    } else {
+      $key = '';
+    }
+    return $method.$key;
   }
 
   private function _error($cmdId, $e) {
@@ -158,10 +171,18 @@ class Device {
 
   private function _event_close() {
     $this->_sender = null;
+
     foreach($this->_cmdSent as $cmd) {
       $cmd['def']->reject(new Exception\ConnClosed);
     }
     $this->_cmdSent = [];
+
+    foreach($this->_cmdCache as $cache) {
+      Loop::cancelTimer($cache->timer);
+      $cache->timer = null;
+    }
+    $this->_cmdCache = [];
+
     $this->_on_close();
   }
 
@@ -296,5 +317,51 @@ class Device {
   public function sendCommandSilent(string $method, array $params=[]): Promise\PromiseInterface {
     $this->silenceNext(true);
     return $this->sendCommand($method, $params);
+  }
+
+  public function sendCommandCached(string $method, array $params=[], int $ttl=60): Promise\PromiseInterface {
+    $silent = $this->_nextSilent();
+    $key = $this->_cmdCacheKey($method, $params);
+
+    if(isset($this->_cmdCache[$key])) {
+      return $this->_silencedPromise($this->_cmdCache[$key]->promise, $silent);
+    }
+
+    $ttl = max(1,$ttl);
+    $cache = (object)[
+      'promise' => null,
+      'timer' => null
+    ];
+
+    $this->silenceNext(false);
+    $cache->promise = $this->sendCommand($method, $params);
+    $cache->timer = Loop::addTimer($ttl, function() use($key,$cache) {
+      $cache->timer = null;
+      unset($this->_cmdCache[$key]);
+    });
+
+    $this->_cmdCache[$key] = $cache;
+    Log::destruct($cache, 'Shelly command cache: '.$key);
+
+    return $this->_silencedPromise($cache->promise, $silent);
+  }
+
+  public function getCommandCache(string $method, array $params=[], &$result=false): ?Promise\PromiseInterface {
+    $silent = $this->_nextSilent();
+    $key = $this->_cmdCacheKey($method, $params);
+
+    if(!($cache = $this->_cmdCache[$key] ?? null)) {
+      return null;
+    }
+
+    if($result !== false) {
+      $result = null;
+      $extractor = function($res) use(&$result) {
+        $result = $res;
+      };
+      $cache->promise->then($extractor,$extractor);
+    }
+
+    return $this->_silencedPromise($cache->promise, $silent);
   }
 }
