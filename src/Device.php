@@ -76,7 +76,7 @@ class Device {
     return $this->_cmdId;
   }
 
-  private function _cmdCacheKey($method, $params=[]) {
+  private function _cmdCacheKey($method, $params) {
     if(!empty($params)) {
       ksort($params);
       $key = json_encode($params);
@@ -171,17 +171,12 @@ class Device {
 
   private function _event_close() {
     $this->_sender = null;
+    $this->clearCommandCache(null);
 
     foreach($this->_cmdSent as $cmd) {
       $cmd['def']->reject(new Exception\ConnClosed);
     }
     $this->_cmdSent = [];
-
-    foreach($this->_cmdCache as $cache) {
-      Loop::cancelTimer($cache->timer);
-      $cache->timer = null;
-    }
-    $this->_cmdCache = [];
 
     $this->_on_close();
   }
@@ -371,5 +366,32 @@ class Device {
     }
 
     return $this->_silencedPromise($cache->promise, $silent);
+  }
+
+  public function clearCommandCache(?string $method='', ?array $params=[]) {
+    if($method === '') {
+      return;
+    }
+    if($method) {
+      $skey = $this->_cmdCacheKey($method, $params);
+    }
+
+    if($method && $params !== null) {
+      if(!isset($this->_cmdCache[$skey])) {
+        return;
+      }
+      $caches = [$skey => $this->_cmdCache[$skey]];
+    } else {
+      $caches = &$this->_cmdCache;
+    }
+
+    foreach($caches as $ckey => $cache) {
+      if($method && $params === null && strpos($ckey,$skey) !== 0) {
+        continue;
+      }
+      Loop::cancelTimer($cache->timer);
+      $cache->timer = null;
+      unset($this->_cmdCache[$ckey]);
+    }
   }
 }
