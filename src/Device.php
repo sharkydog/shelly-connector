@@ -100,7 +100,7 @@ class Device {
       $deferred->reject($e);
     }
 
-    $this->_emit('error', [$e->getMessage(),$e->getCode()]);
+    $this->_emit('error', [$e]);
   }
 
   private function _on_error_msg($cmdId, $errMsg) {
@@ -142,7 +142,6 @@ class Device {
       try {
         $this->_cmd($cmd['method'], $cmd['params']??[], $deferred);
       } catch(\Exception $e) {
-        $this->_error(-1, $e);
         return;
       }
 
@@ -331,6 +330,9 @@ class Device {
 
     if(!$method) {
       return $this->_silencedPromise(Promise\reject(new Exception\Error('Method is empty', 400)), $silent);
+    }
+    if(!$this->_sender) {
+      return $this->_silencedPromise(Promise\reject(new Exception\ConnNotConnected), $silent);
     }
 
     $key = $this->_cmdCacheKey($method, $params);
