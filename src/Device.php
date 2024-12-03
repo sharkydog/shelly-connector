@@ -106,7 +106,7 @@ class Device {
       'def' => $deferred ?? new Promise\Deferred
     ];
     ($this->_sender)($cmd);
-ppn($cmd['method']);
+
     return $this->_cmdId;
   }
 
