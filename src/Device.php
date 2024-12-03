@@ -9,6 +9,7 @@ class Device {
   use PrivateEmitterTrait {
     PrivateEmitterTrait::on as private _PrivateEmitter_on;
     PrivateEmitterTrait::once as private _PrivateEmitter_once;
+    PrivateEmitterTrait::_emit as private _PrivateEmitter_emit;
   }
 
   private $_bound = false;
@@ -27,7 +28,11 @@ class Device {
 
   final public function emitter(&$emitter) {
     if($this->_bound) return;
-    $emitter = $this->_emitter();
+
+    $emitter = function(string $event, array $args=[]) {
+      $this->_PrivateEmitter_emit($event, $args);
+    };
+
     $this->_bound = true;
   }
 
@@ -233,6 +238,10 @@ class Device {
       }
       return;
     }
+  }
+
+  protected function _emit(string $event, array $args=[]) {
+    $this->_EventEmitter_emit($event, $args);
   }
 
   protected function _on_open() {
