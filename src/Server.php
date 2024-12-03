@@ -24,10 +24,12 @@ class Server extends WS\Handler {
     }
 
     $dev = $conn->attr->dev;
+    $sts = false;
 
     if(!$dev && ($msg['method']??'') == 'NotifyFullStatus') {
       $id = $msg['src'];
       $ip = $conn->remoteAddr;
+      $sts = true;
 
       $conn->attr->dev = $this->_devices['ID:'.$id] ?? $this->_devices['IP:'.$ip] ?? null;
       $dev = $conn->attr->dev;
@@ -48,7 +50,7 @@ class Server extends WS\Handler {
         $dev->device->emitter($dev->emitter);
       }
 
-      ($dev->emitter)('open', [$sender]);
+      ($dev->emitter)('open', [$sender,$msg['params']]);
       $this->_emit('device', [$dev->device, $registered]);
     }
 
@@ -56,7 +58,7 @@ class Server extends WS\Handler {
       return;
     }
 
-    ($dev->emitter)('message', [$msg]);
+    ($dev->emitter)('message', [$msg,$sts]);
   }
 
   protected function wsClose(WS\Connection $conn) {
@@ -69,6 +71,7 @@ class Server extends WS\Handler {
 
     if(!$dev->known) {
       $dev->device->removeAllListeners();
+      $dev->device->removeAllComponents();
     }
   }
 

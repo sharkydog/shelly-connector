@@ -12,6 +12,11 @@ class Device {
     PrivateEmitterTrait::_emit as private _PrivateEmitter_emit;
   }
 
+  protected static $componentType = [];
+  protected static $componentLoad = [];
+  protected static $componentArgs = [];
+  protected static $componentLock = true;
+
   private $_bound = false;
   private $_sender;
   private $_authPasswd;
@@ -21,6 +26,14 @@ class Device {
   private $_cmdSent = [];
   private $_cmdCache = [];
   private $_cmdId = 0;
+  private $_comp = [];
+
+  public function __construct() {
+    foreach(static::$componentLoad as $key) {
+      if(isset($this->_comp[$key])) continue;
+      $this->_compLoad($key);
+    }
+  }
 
   public function __destruct() {
     Log::destruct(static::class);
@@ -34,6 +47,22 @@ class Device {
     };
 
     $this->_bound = true;
+  }
+
+  private function _compLoad($key) {
+    $class = static::$componentType[$key] ?? null;
+    $re = preg_match('/^([^\:]+)(?:\:(\d+))?$/',$key,$m);
+
+    if(!$class && $re) {
+      $class = static::$componentType[$m[1]] ?? null;
+    }
+
+    if(!$class || !is_subclass_of($class, Component::class)) {
+      return null;
+    }
+
+    $comp = new $class(...(static::$componentArgs[$key] ?? []));
+    return $this->addComponent($comp, $m[2] ?? null) ? $comp : null;
   }
 
   private function _nextSilent() {
@@ -77,7 +106,7 @@ class Device {
       'def' => $deferred ?? new Promise\Deferred
     ];
     ($this->_sender)($cmd);
-
+ppn($cmd['method']);
     return $this->_cmdId;
   }
 
@@ -167,10 +196,66 @@ class Device {
     $this->_auth['auth']['response'] = $res;
   }
 
-  private function _event_open(callable $sender) {
+  private function _event_open(callable $sender, array $stat=[]) {
     $this->_sender = $sender;
     $this->_cmdId = 0;
+
     $this->_on_open();
+
+    if(empty($this->_comp)) {
+      return;
+    }
+
+    $loadStatus = false;
+    $loadConfig = false;
+    $promises = [];
+
+    foreach($this->_comp as $key => $obj) {
+      ($obj->emitter)('open');
+
+      $status = $stat[$key] ?? null;
+      $wantStatus = $obj->comp->statusUpdates();
+      $wantConfig = $obj->comp->configUpdates();
+
+      if((!$wantStatus || $status!==null) && !$wantConfig) {
+        $obj->init = true;
+        ($obj->emitter)('init', [$wantStatus?$status:[], []]);
+      }
+
+      $loadStatus = $loadStatus ?: ($wantStatus && $status===null);
+      $loadConfig = $loadConfig ?: $wantConfig;
+    }
+
+    if($loadStatus) {
+      $this->silenceNext(false);
+      $promises['stat'] = $this->sendCommandCached('Shelly.GetStatus');
+    }
+    if($loadConfig) {
+      $this->silenceNext(false);
+      $promises['conf'] = $this->sendCommandCached('Shelly.GetConfig');
+    }
+
+    if(empty($promises)) {
+      return;
+    }
+
+    Promise\all($promises)->then(function($res) use(&$stat) {
+      foreach($this->_comp as $key => $obj) {
+        if($obj->init) continue;
+        $status = $obj->comp->statusUpdates() ? ($res['stat'][$key] ?? $stat[$key] ?? []) : [];
+        $config = $obj->comp->configUpdates() ? ($res['conf'][$key] ?? []) : [];
+        $obj->init = true;
+        ($obj->emitter)('init', [$status, $config]);
+      }
+    })->catch(function($e) {
+      $keys = [];
+      foreach($this->_comp as $key => $obj) {
+        if($obj->init) continue;
+        $keys[] = $key;
+        ($obj->emitter)('error', [new Exception\Error('Component init failed ('.$key.')')]);
+      }
+      $this->_error(-1, new Exception\Error('Components init failed ('.implode(',',$keys).')'));
+    });
   }
 
   private function _event_close() {
@@ -182,10 +267,15 @@ class Device {
     }
     $this->_cmdSent = [];
 
+    foreach($this->_comp as $obj) {
+      $obj->init = false;
+      ($obj->emitter)('close');
+    }
+
     $this->_on_close();
   }
 
-  private function _event_message(array $msg) {
+  private function _event_message(array $msg, bool $sts=false) {
     if(isset($msg['id'])) {
       $cmdId = $msg['id'];
 
@@ -211,8 +301,13 @@ class Device {
       $ts = $msg['params']['ts'];
       unset($msg['params']['ts']);
 
-      $comp = array_keys($msg['params'])[0];
-      $this->_on_notify_status($comp, $msg['params'][$comp], $ts);
+      $key = array_keys($msg['params'])[0];
+
+      if(isset($this->_comp[$key]) && $msg['params'][$key] !== null) {
+        ($this->_comp[$key]->emitter)('status', [$msg['params'][$key], $ts, false]);
+      }
+
+      $this->_on_notify_status($key, $msg['params'][$key], $ts);
 
       return;
     }
@@ -220,6 +315,13 @@ class Device {
     if($msg['method'] == 'NotifyFullStatus') {
       $ts = $msg['params']['ts'];
       unset($msg['params']['ts']);
+
+      if(!$sts) {
+        foreach($this->_comp as $key => $obj) {
+          if(!isset($msg['params'][$key])) continue;
+          ($obj->emitter)('status', [$msg['params'][$key], $ts, true]);
+        }
+      }
 
       $this->_on_notify_status_full($msg['params'], $ts);
 
@@ -229,12 +331,26 @@ class Device {
     if($msg['method'] == 'NotifyEvent') {
       foreach($msg['params']['events'] as $data) {
         $ts = $data['ts'];
-        $comp = $data['component'];
+        $key = $data['component'];
         $event = $data['event'];
-
         unset($data['ts'],$data['component'],$data['event']);
-        $this->_on_notify_event($event, $comp, $data, $ts);
+
+        if(isset($this->_comp[$key])) {
+          ($this->_comp[$key]->emitter)('event', [$event, $data, $ts]);
+        }
+
+        if($key == 'sys') {
+          if($event == 'component_removed' && isset($this->_comp[$data['target']])) {
+            $_comp = $this->_comp[$data['target']];
+            $_comp_id = $_comp->comp->getId();
+            $this->removeComponent($_comp->comp->getKey());
+            ($_comp->emitter)('delete', [$this, $_comp_id]);
+          }
+        }
+
+        $this->_on_notify_event($event, $key, $data, $ts);
       }
+
       return;
     }
   }
@@ -276,6 +392,17 @@ class Device {
     return !!$this->_sender;
   }
 
+  public function onceOpened(): Promise\PromiseInterface {
+    if($this->connected()) {
+      return Promise\resolve($this);
+    }
+
+    $deferred = new Promise\Deferred;
+    $this->once('open', fn($dev)=>$deferred->resolve($dev));
+
+    return $deferred->promise();
+  }
+
   public function setPassword(string $password) {
     $this->_authPasswd = $password;
 
@@ -286,6 +413,109 @@ class Device {
       }
     } else {
       $this->_auth = [];
+    }
+  }
+
+  public function addComponent(Component $comp, ?int $id=-1): ?Component {
+    if($id != -1) {
+      $comp->setId($id);
+    }
+
+    $key = $comp->getKey();
+
+    if(isset($this->_comp[$key])) {
+      return null;
+    }
+    if(!$comp->bind($this, $emitter)) {
+      return null;
+    }
+
+    $this->_comp[$key] = (object)[
+      'init' => false,
+      'comp' => $comp,
+      'emitter' => $emitter
+    ];
+
+    $emitter('bind');
+
+    if(!$this->connected()) {
+      return $comp;
+    }
+
+    $emitter('open');
+
+    $wantStatus = $comp->statusUpdates();
+    $wantConfig = $comp->configUpdates();
+
+    if(!$wantStatus && !$wantConfig) {
+      $this->_comp[$key]->init = true;
+      ($this->_comp[$key]->emitter)('init', [[],[]]);
+      return true;
+    }
+
+    $promises = [];
+    $params = ($id=$comp->getId())===null ? [] : ['id'=>$id];
+
+    $silenceAll = $this->silenceAll();
+    $this->silenceAll(false);
+    $this->silenceNext(false);
+
+    if($wantStatus) {
+      $pr = $this->getCommandCache('Shelly.GetStatus');
+      $pr = $pr ?? $this->sendCommand($comp->getMethod('GetStatus'), $params);
+      $promises['stat'] = $pr;
+    }
+    if($wantConfig) {
+      $pr = $this->getCommandCache('Shelly.GetConfig');
+      $pr = $pr ?? $this->sendCommand($comp->getMethod('GetConfig'), $params);
+      $promises['conf'] = $pr;
+    }
+
+    $this->silenceAll($silenceAll);
+
+    Promise\all($promises)->then(function($res) use($key,$comp) {
+      $status = $comp->statusUpdates() ? ($res['stat'][$key] ?? []) : [];
+      $config = $comp->configUpdates() ? ($res['conf'][$key] ?? []) : [];
+      $this->_comp[$key]->init = true;
+      ($this->_comp[$key]->emitter)('init', [$status, $config]);
+    })->catch(function($e) use($key) {
+      $e = new Exception\Error('Component init failed ('.$key.')');
+      ($this->_comp[$key]->emitter)('error', [$e]);
+      $this->_error(-1, $e);
+    });
+
+    return $comp;
+  }
+
+  public function getComponent(string $key): ?Component {
+    if($comp = $this->_comp[$key]->comp ?? null) {
+      return $comp;
+    }
+    if(!in_array($key,static::$componentLoad)) {
+      return null;
+    }
+    if($comp = $this->_compLoad($key)) {
+      return $comp;
+    }
+    else {
+      return null;
+    }
+  }
+
+  public function removeComponent(string $key) {
+    if(static::$componentLock && in_array($key,static::$componentLoad)) {
+      return;
+    }
+    if(!($obj = $this->_comp[$key])) {
+      return;
+    }
+    unset($this->_comp[$key]);
+    ($obj->emitter)('remove', [$this, $obj->comp->getId()]);
+  }
+
+  public function removeAllComponents() {
+    foreach(array_keys($this->_comp) as $key) {
+      $this->removeComponent($key);
     }
   }
 
@@ -408,5 +638,26 @@ class Device {
       $cache->timer = null;
       unset($this->_cmdCache[$ckey]);
     }
+  }
+
+  public function getStatus(bool $update=false): Promise\PromiseInterface {
+    $promise = $this->sendCommand('Shelly.GetStatus');
+
+    if($update) {
+      $promise->then(function($res) {
+        if(!$res) return;
+        $ts = time();
+        foreach($this->_comp as $key => $obj) {
+          if(!isset($res[$key])) continue;
+          ($obj->emitter)('status', [$res[$key], $ts, true]);
+        }
+      })->catch(fn()=>null);
+    }
+
+    return $promise;
+  }
+
+  public function getConfig(): Promise\PromiseInterface {
+    return $this->sendCommand('Shelly.GetConfig');
   }
 }
