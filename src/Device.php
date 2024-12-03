@@ -297,8 +297,12 @@ class Device {
     if($p !== null) $this->_silenceNext = $p;
     return $this->_silenceNext;
   }
-  public function isNextSilent(): bool {
-    return $this->silenceNext() ?? $this->silenceAll();
+  public function isNextSilent(bool $clearNext=false): bool {
+    if($clearNext) {
+      return $this->_nextSilent();
+    } else {
+      return $this->silenceNext() ?? $this->silenceAll();
+    }
   }
 
   public function sendCommand(string $method, array $params=[]): Promise\PromiseInterface {
