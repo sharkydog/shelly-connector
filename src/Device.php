@@ -76,7 +76,9 @@ class Device {
       'cmd' => $cmd,
       'def' => $deferred ?? new Promise\Deferred
     ];
+
     ($this->_sender)($cmd);
+    $this->_on_command($method, $params, $this->_cmdSent[$this->_cmdId]['def']->promise());
 
     return $this->_cmdId;
   }
@@ -249,6 +251,10 @@ class Device {
 
   protected function _on_close() {
     $this->_emit('close');
+  }
+
+  protected function _on_command(string $method, array $params, Promise\PromiseInterface $result) {
+    $this->_emit('command', [$method, $params, $result]);
   }
 
   protected function _on_notify_status(string $comp, array $data, float $time) {
