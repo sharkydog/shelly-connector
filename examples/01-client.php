@@ -104,6 +104,22 @@ $shelly = $client->getDevice();
 // set password
 $shelly->setPassword(CONFIG_PASSWD);
 
+// emitted when a command was sent to the device
+// $result is the promise returned by sendCommand()
+// more on commands further down in this example
+$shelly->on('command', function($method, $params, $result) {
+  static $cnt = 0;
+
+  $param_keys = implode(',',array_keys($params)) ?: 'none';
+  pn('Command ('.(++$cnt).'): '.$method.', param keys: '.$param_keys);
+
+  $result->then(function($res) use($cnt,$method) {
+    pn('Command ('.$cnt.'): Resolved');
+  })->catch(function($e) use($cnt,$method) {
+    pn('Command ('.$cnt.'): Rejected: '.$e->getCode().', '.$e->getMessage());
+  });
+});
+
 // Device object also emits connection close
 $shelly->on('close', function() {
   pn('Connection closed (device)');
@@ -123,6 +139,28 @@ $shelly->on('open', function($shelly) use($client) {
     pn('Shelly.GetDeviceInfo');
     pn($result ?? 'NULL');
   });
+
+  // another way to (un)silence commands is using the following functions
+  //
+  // set all following commands as silent
+  //$shelly->silenceAll(true);
+  // or not
+  //$shelly->silenceAll(false);
+  // can be used as a getter
+  //$allSilenced = $shelly->silenceAll();
+  //
+  // set only the next command as silent
+  // this will overwrite silenceAll() for the next command
+  //$shelly->silenceNext(true);
+  // or not
+  //$shelly->silenceNext(false);
+  // as a getter, will be null after any command
+  //$nextSilenced = $shelly->silenceNext();
+  // or better, this will return silenceAll() if silenceNext()
+  // was not used for the next command
+  //$isNextSilent = $shelly->isNextSilent();
+  // or get and clear silenceNext(), default false
+  //$isNextSilent = $shelly->isNextSilent(true);
 
   // commands bellow will use promise chaining
   // to execute them in sequence
@@ -175,6 +213,43 @@ $shelly->on('open', function($shelly) use($client) {
   // catch all errors
   $pr = $pr->catch(function($e) {
     pn('['.$e->getCode().'] '.$e->getMessage());
+  });
+
+  // commands can be cached, so if the same command
+  // is send again quickly, it will not be send to the device
+  $pr = $pr->then(function() use($shelly) {
+    // get script:1 name and cache result for 1 min (default ttl, can be omitted)
+    $pr = $shelly->sendCommandCached('Script.GetConfig', ['id'=>1], 60);
+    $pr = $pr->then(fn($res) => pn('Script (script:1) name: '.$res['name']));
+    $pr = $pr->catch(fn($e) => pn('Script (script:1) not found: '.$e->getMessage()));
+
+    // get a cached command, will return the same promise
+    // or null if command is not cached
+    // this promise can be separetely (un)silenced by calling silenceNext() first
+    //$shelly->getCommandCache('Script.GetConfig', ['id'=>1]);
+    // the result from the command can be extracted into a variable passed by reference
+    // it will be filled with the resolved array or rejected Throwable object
+    // if the command is already finished when getCommandCache() is called
+    // and cache still exists, $result will be filled and can be used after getCommandCache()
+    //$shelly->getCommandCache('Script.GetConfig', ['id'=>1], $result);
+
+    // clear cache for Script.GetConfig, id: 1
+    //$shelly->clearCommandCache('Script.GetConfig', ['id'=>1]);
+    // clear all cache for Script.GetConfig
+    //$shelly->clearCommandCache('Script.GetConfig', null);
+    // clear all cache
+    //$shelly->clearCommandCache(null);
+
+    // send again and observe 'command' event
+    // Script.GetConfig with id: 1 should not be send twice
+    // if cache is not cleared above
+    //
+    //$shelly->silenceNext(true);
+    $pr = $shelly->sendCommandCached('Script.GetConfig', ['id'=>1]);
+    // alternative to silenceNext()
+    $pr = $pr->catch(fn()=>null);
+
+    return $pr;
   });
 
   // cleanup, in this case just close the client
