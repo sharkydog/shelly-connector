@@ -34,7 +34,7 @@ class Client extends WsClientDecorator {
   }
 
   protected function _event_message($msg) {
-    $msg = json_decode($msg,true);
+    if(!($msg = json_decode($msg,true))) return;
     ($this->_emitter)('message', [$msg]);
   }
 
@@ -42,7 +42,6 @@ class Client extends WsClientDecorator {
     $class = $class ?: Device::class;
     $this->_device = new $class(...$args);
     $this->_device->emitter($this->_emitter);
-    $this->_device->forwardEvents($this->_emitter(), 'notify-status','notify-event');
     return $this->_device;
   }
 
@@ -73,7 +72,7 @@ class Client extends WsClientDecorator {
   }
 
   public function onceOpened(): Promise\PromiseInterface {
-    if($this->connected()) {
+    if($this->ws->connected()) {
       return Promise\resolve($this->_device);
     }
 
