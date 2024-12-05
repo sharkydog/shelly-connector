@@ -14,6 +14,7 @@ class Device {
 
   private $_bound = false;
   private $_sender;
+  private $_devId;
   private $_authPasswd;
   private $_auth = [];
   private $_silenceAll = false;
@@ -188,6 +189,10 @@ class Device {
   }
 
   private function _event_message(array $msg) {
+    if(!$this->_devId) {
+      $this->_devId = $msg['src'] ?? null;
+    }
+
     if(isset($msg['id'])) {
       $cmdId = $msg['id'];
 
@@ -280,6 +285,10 @@ class Device {
 
   public function connected(): bool {
     return !!$this->_sender;
+  }
+
+  public function getDevId(): ?string {
+    return $this->_devId;
   }
 
   public function setPassword(string $password) {
