@@ -56,7 +56,12 @@ class Server extends WS\Handler {
       return;
     }
 
-    ($dev->emitter)('message', [$msg]);
+    try {
+      ($dev->emitter)('message', [$msg]);
+    } catch(\Throwable $e) {
+      ($dev->emitter)('error', [$e]);
+      $conn->close();
+    }
   }
 
   protected function wsClose(WS\Connection $conn) {
