@@ -2,10 +2,17 @@
 namespace SharkyDog\Shelly;
 use SharkyDog\HTTP\WebSocket as WS;
 use SharkyDog\PrivateEmitter\PrivateEmitterTrait;
+use React\EventLoop\Loop;
 
 class Server extends WS\Handler {
   use PrivateEmitterTrait;
   protected static $protocols = ['json-rpc'];
+
+  private $_requireStat = true;
+  private $_dropNoStat = false;
+  private $_dropNoSrc = false;
+  private $_onlyKnown = false;
+  private $_deviceTmo = 0;
 
   private $_src;
   private $_devices = [];
@@ -16,29 +23,45 @@ class Server extends WS\Handler {
 
   protected function wsOpen(WS\Connection $conn) {
     $conn->attr->dev = null;
+    $conn->attr->timer = null;
+
+    if($this->_deviceTmo) {
+      $conn->attr->timer = Loop::addTimer($this->_deviceTmo, function() use($conn) {
+        $conn->attr->timer = null;
+        $conn->close();
+      });
+    }
   }
 
   protected function wsMsg(WS\Connection $conn, string $data) {
-    if(!($msg = json_decode($data,true))) {
+    $msg = json_decode($data,true);
+    $src = $msg['src'] ?? null;
+    $dev = $conn->attr->dev;
+
+    if(!$src) {
+      if(!$dev && $this->_dropNoSrc) $conn->close();
       return;
     }
 
-    $dev = $conn->attr->dev;
+    if(!$dev) {
+      $stat = ($msg['method']??'') == 'NotifyFullStatus' ? ($msg['params']??[]) : [];
 
-    if(!$dev && ($msg['method']??'') == 'NotifyFullStatus') {
-      $id = $msg['src'];
+      if($this->_requireStat && empty($stat)) {
+        if($this->_dropNoStat) $conn->close();
+        return;
+      }
+
       $ip = $conn->remoteAddr;
-
-      $conn->attr->dev = $this->_devices['ID:'.$id] ?? $this->_devices['IP:'.$ip] ?? null;
+      $conn->attr->dev = $this->_devices['ID:'.$src] ?? $this->_devices['IP:'.$ip] ?? null;
       $dev = $conn->attr->dev;
+      $known = !!$dev;
 
-      $sender = function($msg) use($conn) {
-        $msg['src'] = $this->_src;
-        $conn->send(json_encode($msg));
-      };
-      $registered = !!$dev;
+      if(!$known) {
+        if($this->_onlyKnown) {
+          $conn->close();
+          return;
+        }
 
-      if(!$registered) {
         $conn->attr->dev = (object)[];
         $dev = $conn->attr->dev;
 
@@ -48,12 +71,18 @@ class Server extends WS\Handler {
         $dev->device->emitter($dev->emitter);
       }
 
-      ($dev->emitter)('open', [$sender]);
-      $this->_emit('device', [$dev->device, $registered]);
-    }
+      if($conn->attr->timer) {
+        Loop::cancelTimer($conn->attr->timer);
+        $conn->attr->timer = null;
+      }
 
-    if(!$dev) {
-      return;
+      $sender = function($msg) use($conn) {
+        $msg['src'] = $this->_src;
+        $conn->send(json_encode($msg));
+      };
+
+      ($dev->emitter)('open', [$sender]);
+      $this->_emit('device', [$dev->device, $known, $conn, $stat]);
     }
 
     try {
@@ -65,6 +94,10 @@ class Server extends WS\Handler {
   }
 
   protected function wsClose(WS\Connection $conn) {
+    if($conn->attr->timer) {
+      Loop::cancelTimer($conn->attr->timer);
+      $conn->attr->timer = null;
+    }
     if(!($dev = $conn->attr->dev)) {
       return;
     }
@@ -98,5 +131,21 @@ class Server extends WS\Handler {
 
   public function registerDeviceByIP(string $ip, ?string $class=null, ...$args): Device {
     return $this->_registerDevice('IP:'.$ip, $class, $args);
+  }
+
+  public function requireStatus(bool $p) {
+    $this->_requireStat = $p;
+  }
+  public function dropNoStatus(bool $p) {
+    $this->_dropNoStat = $p;
+  }
+  public function dropNoSource(bool $p) {
+    $this->_dropNoSrc = $p;
+  }
+  public function onlyRegistered(bool $p) {
+    $this->_onlyKnown = $p;
+  }
+  public function noDeviceTimeout(int $p) {
+    $this->_deviceTmo = max(0,$p);
   }
 }
