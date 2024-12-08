@@ -81,7 +81,7 @@ class Server extends WS\Handler {
         $conn->send(json_encode($msg));
       };
 
-      ($dev->emitter)('open', [$sender]);
+      ($dev->emitter)('open', [$sender,$src]);
       $this->_emit('device', [$dev->device, $known, $conn, $stat]);
     }
 

@@ -170,8 +170,9 @@ class Device {
     $this->_auth['auth']['response'] = $res;
   }
 
-  private function _event_open(callable $sender) {
+  private function _event_open(callable $sender, ?string $devId=null) {
     $this->_sender = $sender;
+    $this->_devId = $devId;
     $this->_cmdId = 0;
     $this->_on_open();
   }
