@@ -177,7 +177,7 @@ class Device {
     $this->_on_open();
   }
 
-  private function _event_close() {
+  private function _event_close(bool $clean=false) {
     $this->_sender = null;
     $this->clearCommandCache(null);
 
@@ -186,7 +186,7 @@ class Device {
     }
     $this->_cmdSent = [];
 
-    $this->_on_close();
+    $this->_on_close($clean);
   }
 
   private function _event_message(array $msg) {
@@ -255,8 +255,8 @@ class Device {
     $this->_emit('open', [$this]);
   }
 
-  protected function _on_close() {
-    $this->_emit('close');
+  protected function _on_close(bool $clean=false) {
+    $this->_emit('close', [$clean]);
   }
 
   protected function _on_command(string $method, array $params, Promise\PromiseInterface $result) {

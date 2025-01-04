@@ -103,7 +103,7 @@ class Server extends WS\Handler {
     }
 
     $conn->attr->dev = null;
-    ($dev->emitter)('close');
+    ($dev->emitter)('close', [!$dev->known]);
 
     if(!$dev->known) {
       $dev->device->removeAllListeners();
