@@ -282,6 +282,48 @@ class Device {
     $this->_EventEmitter_emit($event, $args);
   }
 
+  protected function _notify(string $method, \stdClass $params) {
+    $this->_event_message((object)[
+      'src' => $this->_devId,
+      'dst' => 'ws',
+      'method' => $method,
+      'params' => $params
+    ]);
+  }
+
+  protected function _update_status(string $compNs, string $compKey, ?int $compId=null) {
+    if($compNs == 'Shelly') {
+      $this->_update_status_full();
+      return;
+    } else if(!$compNs || !$compKey) {
+      return;
+    }
+
+    $method = $compNs.'.GetStatus';
+    $params = $compId===null ? [] : ['id'=>$compId];
+    $compId = $compKey.($compId===null ? '' : ':'.$compId);
+
+    $this->silenceNext(true);
+    $this->rawResultNext(true);
+    $this->sendCommand($method,$params)->then(function($msg) use($compId) {
+      if(!$msg) return;
+      $this->_notify('NotifyStatus', (object)[
+        $compId => $msg->result,
+        'ts' => round(microtime(true),2)
+      ]);
+    });
+  }
+
+  protected function _update_status_full() {
+    $this->silenceNext(true);
+    $this->rawResultNext(true);
+    $this->sendCommand('Shelly.GetStatus')->then(function($msg) {
+      if(!$msg) return;
+      $msg->result->ts = round(microtime(true),2);
+      $this->_notify('NotifyFullStatus', $msg->result);
+    });
+  }
+
   protected function _on_open() {
     $this->_emit('open', [$this]);
   }
