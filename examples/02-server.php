@@ -43,6 +43,26 @@ $httpd->listen('0.0.0.0', 12345);
 // https://shelly-api-docs.shelly.cloud/gen2/General/RPCProtocol
 $shellyServer = new Shelly\Server('test-server');
 
+// basic security
+//
+// discard all messages if NotifyFullStatus is not received, default: true
+//$shellyServer->requireStatus(false);
+//
+// close connection if no valid device after timeout in seconds, default: 0 (disabled)
+// valid device will be after receiving a message on the connection
+// if requireStatus() is true, that message must be NotifyFullStatus
+$shellyServer->noDeviceTimeout(2);
+//
+// close connection if the first message is not NotifyFullStatus, default: false
+// applies only if requireStatus() is true
+$shellyServer->dropNoStatus(true);
+//
+// close connection if any message has no 'src' property in the frame, default: false
+$shellyServer->dropNoSource(true);
+//
+// close connection if the device is not registered, default: false
+//$shellyServer->onlyRegistered(true);
+
 // http route
 // so the endpoint for the outbound websocket will be
 // ws://your_server_ip:12345/ws/shelly
