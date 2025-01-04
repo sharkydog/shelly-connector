@@ -33,9 +33,9 @@ class Server extends WS\Handler {
     }
   }
 
-  protected function wsMsg(WS\Connection $conn, string $data) {
-    $msg = json_decode($data,true);
-    $src = $msg['src'] ?? null;
+  protected function wsMsg(WS\Connection $conn, string $json) {
+    if(!($msg = json_decode($json))) return;
+    $src = $msg->src ?? null;
     $dev = $conn->attr->dev;
 
     if(!$src) {
@@ -44,7 +44,7 @@ class Server extends WS\Handler {
     }
 
     if(!$dev) {
-      $stat = ($msg['method']??'') == 'NotifyFullStatus' ? ($msg['params']??[]) : [];
+      $stat = ($msg->method??'') == 'NotifyFullStatus' ? ($msg->params??null) : null;
 
       if($this->_requireStat && empty($stat)) {
         if($this->_dropNoStat) $conn->close();
@@ -81,6 +81,7 @@ class Server extends WS\Handler {
         $conn->send(json_encode($msg));
       };
 
+      $stat = json_decode(json_encode($stat),true);
       ($dev->emitter)('open', [$sender,$src]);
       $this->_emit('device', [$dev->device, $known, $conn, $stat]);
     }

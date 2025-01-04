@@ -33,8 +33,8 @@ class Client extends WsClientDecorator {
     $this->_emit('close', [$reconnect]);
   }
 
-  protected function _event_message($msg) {
-    if(!($msg = json_decode($msg,true))) return;
+  protected function _event_message($json) {
+    if(!($msg = json_decode($json))) return;
     ($this->_emitter)('message', [$msg]);
   }
 

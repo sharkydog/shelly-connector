@@ -19,6 +19,7 @@ class Device {
   private $_auth = [];
   private $_silenceAll = false;
   private $_silenceNext;
+  private $_rawResultNext = false;
   private $_cmdSent = [];
   private $_cmdCache = [];
   private $_cmdId = 0;
@@ -47,8 +48,27 @@ class Device {
     }
   }
 
+  private function _nextRaw() {
+    $raw = $this->_rawResultNext;
+    $this->_rawResultNext = false;
+    return $raw;
+  }
+
   private function _silencedPromise($promise, $silent) {
     return $silent ? $promise->catch(fn()=>null) : $promise;
+  }
+
+  private function _cachedPromise($key, $raw) {
+    $cache = $this->_cmdCache[$key];
+    $pr = $cache->promise;
+
+    if($raw) {
+      $pr = $pr->then(function() use($cache) {
+        return json_decode($cache->rawRes);
+      });
+    }
+
+    return $pr;
   }
 
   private function _cmd($method, $params=[], $deferred=null) {
@@ -75,7 +95,8 @@ class Device {
 
     $this->_cmdSent[$this->_cmdId] = [
       'cmd' => $cmd,
-      'def' => $deferred ?? new Promise\Deferred
+      'def' => $deferred ?? new Promise\Deferred,
+      'raw' => null
     ];
 
     ($this->_sender)($cmd);
@@ -189,53 +210,62 @@ class Device {
     $this->_on_close($clean);
   }
 
-  private function _event_message(array $msg) {
+  private function _event_message(\stdClass $msg) {
     if(!$this->_devId) {
-      $this->_devId = $msg['src'] ?? null;
+      $this->_devId = $msg->src ?? null;
     }
 
-    if(isset($msg['id'])) {
-      $cmdId = $msg['id'];
-
+    if(($cmdId = $msg->id??null)) {
       if(!isset($this->_cmdSent[$cmdId])) {
         return;
       }
-      if(isset($msg['error'])) {
-        $this->_on_error_msg($cmdId, $msg['error']);
+      if(($err = $msg->error??null)) {
+        $err = json_decode(json_encode($err),true);
+        $this->_on_error_msg($cmdId, $err);
+        return;
+      }
+      if(!($msg->result??null)) {
         return;
       }
 
-      $this->_cmdSent[$cmdId]['def']->resolve($msg['result']);
+      $msg = json_encode($msg);
+      $res = json_decode($msg,true)['result'];
+      $this->_cmdSent[$cmdId]['raw'] = $msg;
+      $this->_cmdSent[$cmdId]['def']->resolve($res);
       unset($this->_cmdSent[$cmdId]);
 
       return;
     }
 
-    if(!isset($msg['method'])) {
+    if(!($method = $msg->method??null) || !($params = $msg->params??null)) {
       return;
+    } else {
+      $params = json_decode(json_encode($params),true);
     }
 
-    if($msg['method'] == 'NotifyStatus') {
-      $ts = $msg['params']['ts'];
-      unset($msg['params']['ts']);
+    $this->_on_notify_raw($msg);
 
-      $comp = array_keys($msg['params'])[0];
-      $this->_on_notify_status($comp, $msg['params'][$comp], $ts);
+    if($method == 'NotifyStatus') {
+      $ts = $params['ts'];
+      unset($params['ts']);
 
-      return;
-    }
-
-    if($msg['method'] == 'NotifyFullStatus') {
-      $ts = $msg['params']['ts'];
-      unset($msg['params']['ts']);
-
-      $this->_on_notify_status_full($msg['params'], $ts);
+      $comp = array_keys($params)[0];
+      $this->_on_notify_status($comp, $params[$comp], $ts);
 
       return;
     }
 
-    if($msg['method'] == 'NotifyEvent') {
-      foreach($msg['params']['events'] as $data) {
+    if($method == 'NotifyFullStatus') {
+      $ts = $params['ts'];
+      unset($params['ts']);
+
+      $this->_on_notify_status_full($params, $ts);
+
+      return;
+    }
+
+    if($method == 'NotifyEvent') {
+      foreach($params['events'] as $data) {
         $ts = $data['ts'];
         $comp = $data['component'];
         $event = $data['event'];
@@ -243,6 +273,7 @@ class Device {
         unset($data['ts'],$data['component'],$data['event']);
         $this->_on_notify_event($event, $comp, $data, $ts);
       }
+
       return;
     }
   }
@@ -275,13 +306,33 @@ class Device {
     $this->_emit('notify-event', [$event, $comp, $data, $time]);
   }
 
+  protected function _on_notify_raw(\stdClass $msg) {
+    $this->_emit('notify-raw', [json_encode($msg)]);
+  }
+
+  private function _on($event, $listener, $once) {
+    if($event == 'open') {
+      if($this->connected()) {
+        $listener($this);
+        if($once) return;
+      }
+    } else if($event == 'notify-raw') {
+      $listener = function(string $msg) use($listener) {
+        $listener(json_decode($msg));
+      };
+    }
+    if($once) {
+      $this->_PrivateEmitter_once($event, $listener);
+    } else {
+      $this->_PrivateEmitter_on($event, $listener);
+    }
+  }
+
   public function on($event, callable $listener) {
-    if($event == 'open' && $this->connected()) $listener($this);
-    $this->_PrivateEmitter_on($event, $listener);
+    $this->_on($event, $listener, false);
   }
   public function once($event, callable $listener) {
-    if($event == 'open' && $this->connected()) $listener($this);
-    else $this->_PrivateEmitter_once($event, $listener);
+    $this->_on($event, $listener, true);
   }
 
   public function connected(): bool {
@@ -321,8 +372,14 @@ class Device {
     }
   }
 
+  public function rawResultNext(?bool $p=null): bool {
+    if($p !== null) $this->_rawResultNext = $p;
+    return $this->_rawResultNext;
+  }
+
   public function sendCommand(string $method, array $params=[]): Promise\PromiseInterface {
     $silent = $this->_nextSilent();
+    $raw = $this->_nextRaw();
 
     if(!$method) {
       return $this->_silencedPromise(Promise\reject(new Exception\Error('Method is empty', 400)), $silent);
@@ -333,11 +390,18 @@ class Device {
 
     try {
       $cmdId = $this->_cmd($method, $params);
+      $pr = $this->_cmdSent[$cmdId]['def']->promise();
     } catch(\Exception $e) {
       return $this->_silencedPromise(Promise\reject($e), $silent);
     }
 
-    return $this->_silencedPromise($this->_cmdSent[$cmdId]['def']->promise(), $silent);
+    if($raw) {
+      $pr = $pr->then(function() use($cmdId) {
+        return json_decode($this->_cmdSent[$cmdId]['raw']);
+      });
+    }
+
+    return $this->_silencedPromise($pr, $silent);
   }
 
   public function sendCommandSilent(string $method, array $params=[]): Promise\PromiseInterface {
@@ -347,6 +411,7 @@ class Device {
 
   public function sendCommandCached(string $method, array $params=[], int $ttl=60): Promise\PromiseInterface {
     $silent = $this->_nextSilent();
+    $raw = $this->_nextRaw();
 
     if(!$method) {
       return $this->_silencedPromise(Promise\reject(new Exception\Error('Method is empty', 400)), $silent);
@@ -356,15 +421,26 @@ class Device {
     }
 
     $key = $this->_cmdCacheKey($method, $params);
+    $cache = $this->_cmdCache[$key] ?? null;
 
-    if(isset($this->_cmdCache[$key])) {
-      return $this->_silencedPromise($this->_cmdCache[$key]->promise, $silent);
+    if($cache && $ttl < (time() - $cache->time)) {
+      Loop::cancelTimer($cache->timer);
+      $cache->timer = null;
+      $cache = null;
+      unset($this->_cmdCache[$key]);
+    }
+
+    if($cache) {
+      return $this->_silencedPromise($this->_cachedPromise($key,$raw), $silent);
     }
 
     $ttl = max(1,$ttl);
     $cache = (object)[
       'promise' => null,
-      'timer' => null
+      'timer' => null,
+      'time' => null,
+      'cmdId' => null,
+      'rawRes' => null
     ];
 
     $this->silenceNext(false);
@@ -373,30 +449,40 @@ class Device {
       $cache->timer = null;
       unset($this->_cmdCache[$key]);
     });
+    $cache->time = time();
+    $cache->cmdId = $this->_cmdId;
+
+    $this->_silencedPromise($cache->promise->then(function() use($key,$cache) {
+      if($cache !== ($this->_cmdCache[$key]??null)) return;
+      $cache->rawRes = $this->_cmdSent[$cache->cmdId]['raw'];
+    }),true);
 
     $this->_cmdCache[$key] = $cache;
     Log::destruct($cache, 'Shelly command cache: '.$key);
 
-    return $this->_silencedPromise($cache->promise, $silent);
+    return $this->_silencedPromise($this->_cachedPromise($key,$raw), $silent);
   }
 
   public function getCommandCache(string $method, array $params=[], &$result=false): ?Promise\PromiseInterface {
     $silent = $this->_nextSilent();
+    $raw = $this->_nextRaw();
     $key = $this->_cmdCacheKey($method, $params);
 
-    if(!($cache = $this->_cmdCache[$key] ?? null)) {
+    if(!isset($this->_cmdCache[$key])) {
       return null;
     }
+
+    $pr = $this->_cachedPromise($key,$raw);
 
     if($result !== false) {
       $result = null;
       $extractor = function($res) use(&$result) {
         $result = $res;
       };
-      $cache->promise->then($extractor,$extractor);
+      $pr->then($extractor,$extractor);
     }
 
-    return $this->_silencedPromise($cache->promise, $silent);
+    return $this->_silencedPromise($pr, $silent);
   }
 
   public function clearCommandCache(?string $method='', ?array $params=[]) {
