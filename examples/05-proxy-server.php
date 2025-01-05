@@ -117,7 +117,7 @@ $proxyServer->disableCommand('Ws.SetConfig');
 
 // this will apply only to the specific proxy device
 // must be called after registerDevice() with the same port and address
-//$proxyServer->disableCommand('Shelly.FactoryReset', 12349);
+//$proxyServer->disableCommand('Shelly.FactoryReset', true, 12349);
 // equivalent to
 //$proxyDevice->disableCommand('Shelly.FactoryReset');
 
