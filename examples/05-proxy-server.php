@@ -57,6 +57,48 @@ $proxyServer->registerDevice($shelly, 12347);
 // and set it in the Shelly.GetDeviceInfo response
 $proxyServer->registerDevice(new Shelly\Proxy\Device($shelly,'shellyxxxx-aabbccddeeff'), 12348);
 
+
+// Advertise proxy devices through mDNS
+// Requires sharkydog/mdns package, not installed by default
+//
+//$mdnsd = new SharkyDog\mDNS\SimpleResponder;
+//$mdnsd->start();
+//
+// enable mDNS responder
+//$proxyServer->enableMDNS($mdnsd);
+// or enable, set default domain and add an IPv4 record (type A)
+// default domain is required for devices registered without an ip address
+//$proxyServer->enableMDNS($mdnsd, 'shelly-proxies.local', '192.168.0.123');
+//
+// mDNS has to be enabled also for every registered proxy device
+//$proxyServer->enableDeviceMDNS(12348);
+// if the device is registered in the proxy server with ip address
+// in this case a new A record will be created, shellyxxxx-aabbccddeeff.local
+//$proxyServer->enableDeviceMDNS(12347, '192.168.0.123');
+//
+// There is a big catch regarding mDNS discovery and Home Assistant!
+// Home Assistant will auto discover shelly devices
+// only if they are listening on port 80 (http default).
+//
+// This presents some problems.
+// Each proxy device must be registered on port 80 with unique ip address owned by the host.
+// But, the bigger problem is the server needs to run as root.
+// Which means the public side listening for connections (here on port 12345)
+// from shelly devices behind NAT will also run with root privileges.
+// This usually is a big NO NO, especially for this server
+// as it is based on sharkydog/http package,
+// which was not meant to be and probably never will be THAT secure.
+//
+// One option is to put this proxy server behind a reverse proxy (nginx,apache)
+// and have it listen on port above 1000, so it can run as unprivileged user.
+// The public side probably should also be behind a real http server
+// that has mitigations against popular and unpopular exploits.
+//
+// Another option is to run the whole thing in a virtual machine, backup, snapshot, restore, etc.
+//
+// You have been warned!!!
+
+
 // a custom proxy device
 // message formats
 // https://shelly-api-docs.shelly.cloud/gen2/General/RPCProtocol

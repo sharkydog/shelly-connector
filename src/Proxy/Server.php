@@ -4,12 +4,17 @@ use SharkyDog\Shelly;
 use SharkyDog\HTTP;
 use SharkyDog\HTTP\Log;
 use SharkyDog\HTTP\WebSocket as WS;
+use SharkyDog\mDNS;
+use React\Dns\Model\Message as DnsMessage;
+use React\Promise;
 
 class Server extends WS\Handler {
   private $_httpd;
   private $_dev = [];
   private $_conn = [];
   private $_denycmd = [];
+  private $_mdnsd;
+  private $_mdnsd_target;
 
   public function __construct(?HTTP\Server $httpd=null) {
     $this->_httpd = $httpd ?? new HTTP\Server;
@@ -226,5 +231,82 @@ class Server extends WS\Handler {
     } else {
       unset($this->_denycmd[strtolower($method)]);
     }
+  }
+
+  public function enableMDNS(mDNS\SimpleResponder $mdnsd, string $domain='', string $addr='') {
+    $this->_mdnsd = $mdnsd;
+    $this->_mdnsd_target = $domain;
+    if($addr) $mdnsd->addRecordIPv4($domain, $addr, 120, true);
+  }
+
+  public function enableDeviceMDNS(int $port, string $addr='') {
+    if(!$this->_mdnsd) {
+      throw new \Exception('mDNS is not enabled');
+    }
+    if(!$this->_mdnsd_target && !$addr) {
+      throw new \Exception('Can not enable mDNS for a proxy with no IPv4 address when global domain is not set');
+    }
+    if(!($dev = $this->_dev[$addr.':'.$port] ?? null)) {
+      throw new \Exception('Proxy device '.$addr.':'.$port.' not found');
+    }
+
+    $shellyid = null;
+
+    $dev->on('open', function($dev) use(&$shellyid,$port,$addr) {
+      if(!$shellyid) {
+        $pr = $dev->sendCommandSilent('Shelly.GetDeviceInfo');
+        $pr = $pr->then(function($res) use(&$shellyid,$port,$addr) {
+          if(!($res['id'] ?? null)) return null;
+
+          $shellyid = $res['id'];
+          $target = $this->_mdnsd_target;
+
+          if($addr) {
+            $target = $shellyid.'.local';
+            $this->_mdnsd->addRecordIPv4($target, $addr, 120, true);
+          }
+
+          $this->_mdnsd->addService(
+            '_http._tcp', $shellyid, 120, $target, $port,
+            'gen='.$res['gen']
+          );
+          $this->_mdnsd->addService(
+            '_shelly._tcp', $shellyid, 120, $target, $port,
+            'gen='.$res['gen'], 'app='.$res['app'], 'ver='.$res['ver']
+          );
+
+          return $shellyid;
+        });
+      } else {
+        $pr = Promise\resolve($shellyid);
+      }
+
+      $pr->then(function($shellyid) use($addr) {
+        if(!$shellyid) return;
+
+        if($addr) $this->_mdnsd->enableRecord($shellyid.'.local', DnsMessage::TYPE_A, $addr, true);
+        $this->_mdnsd->enableService('_http._tcp', $shellyid, true);
+        $this->_mdnsd->enableService('_shelly._tcp', $shellyid, true);
+        $this->_mdnsd->advertiseService('_http._tcp', $shellyid);
+        $this->_mdnsd->advertiseService('_shelly._tcp', $shellyid);
+      });
+    });
+
+    $dev->on('close', function($clean=false) use(&$shellyid,$addr) {
+      if(!$shellyid) return;
+
+      $this->_mdnsd->advertiseService('_http._tcp', $shellyid, 0);
+      $this->_mdnsd->advertiseService('_shelly._tcp', $shellyid, 0);
+
+      if($clean) {
+        if($addr) $this->_mdnsd->delRecord($shellyid.'.local', DnsMessage::TYPE_A, $addr);
+        $this->_mdnsd->delService('_http._tcp', $shellyid);
+        $this->_mdnsd->delService('_shelly._tcp', $shellyid);
+      } else {
+        if($addr) $this->_mdnsd->enableRecord($shellyid.'.local', DnsMessage::TYPE_A, $addr, false);
+        $this->_mdnsd->enableService('_http._tcp', $shellyid, false);
+        $this->_mdnsd->enableService('_shelly._tcp', $shellyid, false);
+      }
+    });
   }
 }
